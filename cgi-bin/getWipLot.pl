@@ -1,0 +1,483 @@
+#!/usr/local/bin/perl
+use lib "/exec/apps/bin/lib/perl5";
+use env_unix;
+use Data::Dumper;
+use lib_cgi;
+use lib_dbconn;
+use POSIX;   
+use Time::Local;
+use JSON;
+use CGI;
+use CGI qw(:standard);
+use Spreadsheet::WriteExcel;
+use Spreadsheet::ParseExcel;
+use CONFAnalysis;
+
+require "/exec/apps/bin/lib/perl5/Mask.pm";
+
+
+print "Content-type: application/json\n\n";
+
+my $bindir="/probeeng/webadmin/cgi-bin/OpenLot/";
+$promis_tbl_owner = 'bat3ptorrent';
+my $str=CONFAnalysis->new();
+$str->LoadCONF($bindir."VA_table") or die $!;
+my %MappingState;
+
+my $currentTime = time();
+
+$MappingState{wait} = 'D,S,T';
+$MappingState{hold} = 'E,G,H,K,L,O,P,U,V,X,Y,a,c';
+$MappingState{running} = 'J';
+
+$MappingState{D} = 'Wait';
+$MappingState{S} = 'Wait';
+$MappingState{T} = 'Wait';
+$MappingState{E} = 'Hold';
+$MappingState{G} = 'Hold';
+$MappingState{H} = 'Hold';
+$MappingState{K} = 'Hold';
+$MappingState{L} = 'Hold';
+$MappingState{O} = 'Hold';
+$MappingState{P} = 'Hold';
+$MappingState{U} = 'Hold';
+$MappingState{V} = 'Hold';
+$MappingState{X} = 'Hold';
+$MappingState{Y} = 'Hold';
+$MappingState{J} = 'Running';
+#$MappingState{K} = 'Running';
+
+
+my $conditions = {};
+$conditions->{platform} = uc param('plat');
+$conditions->{mask} = uc param('mask');
+$conditions->{device} = uc param('device');
+$conditions->{stage} = uc param('stage');
+$conditions->{holdcode} = uc param('holdcode');
+$conditions->{status} = param('status');
+$conditions->{lottype} = uc param('lottype');
+$conditions->{session} = lc param('session');
+$conditions->{lotid} = lc param('lotid');
+$toExcel = param('toExcel');
+
+#debug
+#$conditions->{mask} = 'M41P';
+#$conditions->{platform} = 'CATALYST';
+#end
+
+my $dbh_torr=DBI->connect(&getconn('tjn','promis'));
+
+my $CategoryMap = {};
+my $sql_getCategory = "select a.partprcdname,a.partprcdversion,a.category from $promis_tbl_owner.catg a where a.catgnumber = 31";
+my $sth_getCatefory = $dbh_torr->prepare($sql_getCategory);
+$sth_getCatefory->execute();
+$sth_getCatefory->bind_columns(
+	undef,\$partname,\$partversion, \$category
+);
+while ( $sth_getCatefory->fetch() ) {
+	$CategoryMap->{$partname}->{$partversion}->{platform} = $category;
+}
+$sth_getCatefory->finish();
+
+my $sql_getRelatedLots = "
+SELECT a.lotid,a.partname,d.parmval,a.partversion,a.parentid,a.priority,a.stage,a.curmainqty,a.lottype,a.state,
+to_char(a.stateentrytime,'yyyy/mm/dd/ hh24:mi'),a.holdcode,a.holdreas,d.matconvrate  
+FROM $promis_tbl_owner.actl a 
+left join 
+(select b.prcdname,c.parmval,e.matconvrate  from $promis_tbl_owner.prcd b 
+left join $promis_tbl_owner.PPARNTOTALPARMS c
+on b.prcdname = c.prcdname and b.prcdversion = c.prcdversion  
+left join $promis_tbl_owner.pauxmattypeconvcount e
+on b.prcdname = e.prcdname and b.prcdversion = e.prcdversion  
+where b.activeflag = 'A' and c.parmname ='\$DIESHIPPART') d
+on a.partname = d.prcdname
+WHERE a.prodarea='BAT3' AND a.COMCLASS='W' AND NOT regexp_like(a.stage,'^(910|WBP)')
+ ";
+ #AND regexp_like(stage,'^^(910|WBP)')
+my $sth_getRelatedLots = $dbh_torr->prepare($sql_getRelatedLots);
+$sth_getRelatedLots->execute();
+my ($lotid,$device,$dpartname,$partversion,$parentid,$priority,$stage,$stage,$curmainqty,$lottype,$state,$stateentrytime,$holdcode,$holdreason);
+my @Storage;
+$sth_getRelatedLots->bind_columns( undef,\$lotid,\$device,\$dpartname,\$partversion,\$parentid,\$priority,\$stage,\$curmainqty,\$lottype,\$state,\$stateentrytime,\$holdcode,\$holdreason,\$pdpw);
+while ( $sth_getRelatedLots->fetch() ) {
+	my $unit = {};
+	$unit->{lotid} = $lotid;
+	$unit->{priority}=$priority;
+	$unit->{device} = $device;
+	$unit->{dpartname} = $dpartname;
+	my $VA=$str->block('VA')->key($dpartname);
+	if ($VA eq '') { 
+		$unit->{va}='-';
+	}else{
+		$unit->{va}=$VA;
+	}
+	if ( $unit->{va} == 0 ) {
+		$unit->{'1va'} =0;
+	}else{
+		$unit->{'1va'} =  sprintf("%.2f",1/$unit->{va});
+	}
+	$unit->{partversion} = $partversion;
+	$unit->{stage} = $stage;
+	$unit->{pdpw} = $pdpw;
+	$unit->{qty} = $curmainqty;
+	$unit->{vxp}=sprintf("%.2f",$unit->{qty} *  $unit->{va} * $unit->{pdpw});
+	if ( substr($unit->{stage},0,2) >= 95 ) {
+		$unit->{session} = 'back';
+	} else {
+		$unit->{session} = 'front';
+	}
+	$unit->{lottype} = $lottype;
+	$unit->{state} = $state;
+	if($holdcode ne '') {
+		$unit->{holdcode} = $holdcode;
+		$unit->{stateentrytime} = $stateentrytime;
+	} else {
+		$unit->{holdcode} = '-';
+		$unit->{stateentrytime} = '-';
+	}
+	if ($holdreason ne '') {
+		$unit->{holdreason} = $holdreason;
+	} else {
+		$unit->{holdreason} = '-';
+	}
+	$unit->{status} = $MappingState{$state};
+	if($parentid eq $lotid) {
+		$unit->{rootLot} = 1;
+	} else {
+		$unit->{rootLot} = 0;
+	}
+	push @{$unit->{motherLot}},$lotid;
+	if ($unit->{status} eq '') {
+		$unit->{status} = 'Unknown';
+	}
+	my $mask = &showmask($device);
+	$unit->{mask} = $mask; 
+	# set platform
+	$unit->{platform} = $CategoryMap->{$unit->{device}}->{$unit->{partversion}}->{platform};
+# changed by Jiang Nan 20150603	
+#	my $flag = 0;
+#	foreach my $condition(keys %$conditions) {
+#		if($conditions->{$condition} ne '') {
+#			if (uc($unit->{$condition}) ne uc($conditions->{$condition})) {
+#				$flag = 1;
+#				last;
+#			} 
+#		}
+#	}
+#	if($flag != 1) {
+#		push @Storage, $unit;
+#	}
+
+	my $flag1 = 1; # 0 stands for invalid , default valid
+	foreach my $condition(keys %$conditions) {
+		if($conditions->{$condition} ne '') {
+			my @array = split(',|\s',uc($conditions->{$condition}));
+			my $flag2 = 0; # 0 stands for invalid
+			foreach my $ele(@array) {
+				if (uc($unit->{$condition}) eq $ele ) {
+					$flag2 = 1; # set to valid
+				}
+			}
+			if($flag2 == 0) {
+				$flag1 = 0;
+			}
+		}
+	}
+	if($flag1 == 1) {
+		push @Storage, $unit;
+	}
+
+}
+$sth_getRelatedLots->finish();
+
+
+my $sql_getStorageRack = "select parmval from $promis_tbl_owner.actllotparmcount where lotid=? AND parmname like '%\$PROBE_SHELF%'";
+my $sth_getStorageRack = $dbh_torr->prepare($sql_getStorageRack);
+
+my $sql_getMotherLot = "select parentid from $promis_tbl_owner.actl where lotid=?";
+my $sth_getMotherLot = $dbh_torr->prepare($sql_getMotherLot);
+
+my $sql_getPSWR = "
+select (endtime-to_date('1970-1-1 08:00:00','yyyy-mm-dd hh24:mi:ss'))*24*60*60 from $promis_tbl_owner.actl
+where lotid=? and stage in ('9100-PSWR','910W-PSWR')
+union all
+select (endtime-to_date('1970-1-1 08:00:00','yyyy-mm-dd hh24:mi:ss'))*24*60*60 from $promis_tbl_owner.hstg 
+where lotid=? and stage in ('9100-PSWR','910W-PSWR') ";
+my $sth_getPSWR = $dbh_torr->prepare($sql_getPSWR);
+
+my $sql_getBirth = "
+select (evtime-to_date('1970-1-1 08:00:00','yyyy-mm-dd hh24:mi:ss'))*24*60*60,evvariant from (
+	select evtime,evvariant from bat3ptorrent.histevcount
+	where lotid=?
+	union all
+	select evtime,evvariant from bat3ptorrent.actlevcount
+	where lotid=?
+	order by 1
+) where rownum=1
+";
+$sth_getBirth = $dbh_torr->prepare($sql_getBirth);
+
+my $sql_getLotDetail = "
+SELECT (evtime-to_date('1970-1-1 08:00:00','yyyy-mm-dd hh24:mi:ss'))*24*60*60,evtype,evvariant from bat3ptorrent.histevcount
+where lotid=? and ( evtype = 'HOLD' or evtype = 'RELS' or ( evtype='COMM' AND evvariant like 'New hold code:%' ) ) 
+and evtime>to_date(?,'yyyy-mm-dd hh24:mi:ss') and evtime<to_date(?,'yyyy-mm-dd hh24:mi:ss')
+UNION ALL
+SELECT (evtime-to_date('1970-1-1 08:00:00','yyyy-mm-dd hh24:mi:ss'))*24*60*60,evtype,evvariant from bat3ptorrent.actlevcount
+where lotid=? and ( evtype = 'HOLD' or evtype = 'RELS' or ( evtype='COMM' AND evvariant like 'New hold code:%' ) ) 
+and evtime>to_date(?,'yyyy-mm-dd hh24:mi:ss') and evtime<to_date(?,'yyyy-mm-dd hh24:mi:ss')
+order by 1 desc
+";
+my $sth_getLotDetail = $dbh_torr->prepare($sql_getLotDetail);
+
+my @OutputStorage;
+foreach my $unit (@Storage) {
+	# set storage rack number.
+	$sth_getStorageRack->execute($unit->{lotid});
+	my $parmval;
+	$sth_getStorageRack->bind_columns(
+		undef,\$parmval
+	);
+	$unit->{storage_rack} = '';
+	while ( $sth_getStorageRack->fetch() ) {
+		$unit->{storage_rack} = $parmval;
+	}
+	
+	# start locate all mother lotid
+	my $_lotid = $unit->{lotid};
+	$unit->{DumpRootLot} = $unit->{rootLot};
+	while($unit->{DumpRootLot} == 0) {
+		$sth_getMotherLot->execute($_lotid);
+		my $parentid;
+		$sth_getMotherLot->bind_columns(
+			undef,\$parentid
+		);
+		while( $sth_getMotherLot->fetch() ) {
+			if($parentid eq $_lotid) {
+				$unit->{DumpRootLot} = 1;
+				last;
+			}
+			push @{$unit->{motherLot}},$parentid ;
+			$_lotid = $parentid;
+		}
+	}
+	undef $unit->{DumpRootLot};
+	# end locate mother lot
+	
+	while(! defined $unit->{PSWREndTime}) {
+		foreach my $_lotid (@{$unit->{motherLot}}) {
+#			print "lotid:$_lotid,PSWR=$unit->{PSWREndTime}\n";
+			$sth_getPSWR->execute($_lotid,$_lotid);
+			my $endtime;
+			$sth_getPSWR->bind_columns(
+				undef,\$endtime
+			);
+			while ( $sth_getPSWR->fetch() ) {
+				$unit->{PSWREndTime} = sprintf("%.0f",$endtime);
+			}
+			push @{$unit->{ActiveMotherLot}},$_lotid;
+			if (defined $unit->{PSWREndTime}) {
+				last;
+			}
+		}
+		if($unit->{PSWREndTime} eq '' || $unit->{PSWREndTime} == 0) {
+			$unit->{PSWREndTime} = '-';
+		}
+	}
+	
+	if ($unit->{PSWREndTime} ne '-') {
+		$unit->{HoldDuration} = 0;
+		$unit->{TotalDuration} =  sprintf("%.2f",($currentTime - $unit->{PSWREndTime})/86400);
+		if ($unit->{rootLot} == 1) {
+			&getHoldDetail($unit,$unit->{lotid},$unit->{PSWREndTime},$currentTime);
+		} else {
+			# it's complicated  when this lot is a child lot , especially a multi child lot
+			my $birth,$evvariant;
+			$sth_getBirth->execute($unit->{lotid},$unit->{lotid});
+			$sth_getBirth->bind_columns(
+				undef,\$birth,\$evvariant
+			);
+			while ( $sth_getBirth->fetch() ) {
+			}
+			#&getHoldDetail($unit,$unit->{lotid},$birth,$currentTime);
+			&getHoldDetail($unit,$unit->{lotid},$unit->{PSWREndTime},$currentTime);			
+
+			my $parentBirth = sprintf("%.0f",$birth);
+			#print "lotid=$unit->{lotid},birth=$birth\n";
+			my $i = 1;
+			while ($parentBirth > $unit->{PSWREndTime}) {
+				my $lotid=${$unit->{ActiveMotherLot}}[$i];
+#				my $lotid=${$unit->{motherLot}}[$i];
+				if($lotid eq '') {
+					print Dumper($unit);
+					die "lotid not found! i=$i\n";
+				}
+				$sth_getBirth->execute($lotid,$lotid);
+				#_evvariant not in use, wait for KXL back
+				my $_birth,$_evvariant;
+				$sth_getBirth->bind_columns(
+					undef,\$_birth,\$_evvariant
+				);
+				while ( $sth_getBirth->fetch() ) {
+					$parentBirth = $_birth;
+				}
+				if ($parentBirth == $birth) {
+					print Dumper($unit);
+					die "lotid:$lotid,birth=$birth,parentBirth=$parentBirth\n";
+				}
+				
+				# if birth date < PSWREndTime, use PSWREndTime instead.
+				if ($parentBirth < $unit->{PSWREndTime}) {
+					&getHoldDetail($unit,$lotid,$unit->{PSWREndTime},$birth);
+				} else {
+					&getHoldDetail($unit,$lotid,$parentBirth,$birth);
+				}
+				
+				#&getHoldDetail($unit,$lotid,$parentBirth,$birth);
+				$birth = $parentBirth;
+				$i++;
+			}
+			
+		}
+		$unit->{RunningDuration} = sprintf("%.2f",$unit->{TotalDuration} - $unit->{HoldDuration});
+	} else {
+		$unit->{TotalDuration} = '-';
+		$unit->{HoldDuration} = '-';
+		$unit->{RunningDuration} = '-';
+	}
+	
+	# undef these data to reduce the data.
+	undef $unit->{HoldEvents};
+	undef $unit->{ActiveMotherLot};
+	undef $unit->{motherLot};
+	
+}
+
+#print Dumper(\@Storage);
+#exit;
+$sth_getStorageRack->finish();
+$sth_getMotherLot->finish();
+$sth_getPSWR->finish();
+
+if ($toExcel == 1) {
+	
+	#print 1;
+	#exit;
+	my $xls_file = "OpenLotSummary_$currentTime.xls";
+	if (-f $xls_file && -w _) {
+		my $rs = unlink($xls_file);
+		#print "remove $rs file(s)\n";
+	} elsif ( -f $xls_file && ! -w _) {
+		die "$xls_file is unreadable, please contact JiangNan check permission!\n";
+	}
+	my $path = "/probeeng/webadmin/cgi-bin/OpenLot/downloads";
+	my $sheet_name = 'Lot Summary';
+	my $xls_obj = new Spreadsheet::WriteExcel("$path/$xls_file");
+	my $red_style = $xls_obj->add_format(bg_color  => 'red');
+	my $yellow_style = $xls_obj->add_format(bg_color  => 'yellow');
+#	my $green_style = $xls_obj->add_format(bg_color  => 'green');
+	my $green_style = $xls_obj->add_format(bg_color  => 0x0B);
+	my $sheet = $xls_obj->add_worksheet( $sheet_name );
+	my $datestamp = strftime('%F %T',localtime($currentTime));
+
+	# Lot Summary Result
+	$sheet->write(0,0,"Lot Summary Results on $datestamp");
+	
+	my @title = ('Total CT','Wait+Running','Platform','Mask','Device','DiePartname','lotID','Qty','PDPW','VA','1/VA','VPQ','Priority','Lottype','Shelf','Stage','Session','Status','HoldTime','HoldCode','HoldReason','Hold');
+	my @content = ('TotalDuration','RunningDuration','platform','mask','device','dpartname','lotid','qty','pdpw','va','1va','vxp','priority','lottype','storage_rack','stage','session','status','stateentrytime','holdcode','holdreason','HoldDuration');
+	for(my $i=0;$i<@title;$i++) {
+		$sheet->write(2,$i,$title[$i]);
+	}
+	@Storage = sort { $b->{TotalDuration} <=> $a->{TotalDuration} } @Storage;	
+	for(my $i=0;$i<@Storage;$i++) {
+		my $unit = $Storage[$i];
+		for(my $j=0;$j<@content;$j++) {
+			if($content[$j] eq 'status') {
+				if($unit->{$content[$j]} eq 'Wait') {
+					$sheet->write(3+$i,$j,$unit->{$content[$j]},$yellow_style);
+				} elsif($unit->{$content[$j]} eq 'Hold') {
+					$sheet->write(3+$i,$j,$unit->{$content[$j]},$red_style);
+				} elsif($unit->{$content[$j]} eq 'Running') {
+					$sheet->write(3+$i,$j,$unit->{$content[$j]},$green_style);
+				} else {
+					$sheet->write(3+$i,$j,$unit->{$content[$j]});
+				}
+			} else {
+				$sheet->write(3+$i,$j,$unit->{$content[$j]});
+			}
+		}
+	}
+	
+	my %output;
+	$output{success} = 'true';
+	
+	$output{file} = "$xls_file";
+	my $json = to_json(\%output);
+	$xls_obj->close();
+	print "$json";
+	exit;
+}
+
+
+my %output;
+$output{success} = 'true';
+
+$output{results} = \@Storage;
+my $json = to_json(\%output);
+
+print "$json";
+
+sub getHoldDetail {
+	my $unit = shift;
+	my $lotid = shift;
+	my $startTime = shift;
+	my $endTime = shift;
+	if($startTime eq $endTime) {
+		print Dumper($unit);
+		die "Time Error for $lotid";
+	}
+	$sth_getLotDetail->execute(
+		$lotid,
+		strftime('%F %T',localtime($startTime)),
+		strftime('%F %T',localtime($endTime)),
+		$lotid,
+		strftime('%F %T',localtime($startTime)),
+		strftime('%F %T',localtime($endTime))
+	);
+	$sth_getLotDetail->bind_columns( undef,\$evtime,\$evtype,\$evvariant);
+	my $end_time = $endTime;
+	while($sth_getLotDetail->fetch()) {
+		$evtime = sprintf('%.0f',$evtime);
+		$evvariant=~s/\x07/:/g;
+		my $eunit = {};
+		if ($evtype eq 'RELS') {
+			$end_time = $evtime;
+			next;
+		} else {
+			my $duration = $end_time - $evtime;
+			my $holdcode;
+			if ($evtype eq 'HOLD') {
+				$holdcode = $1 if $evvariant =~ /:(\w+)$/;
+				if ($holdcode eq '') {
+					$holdcode = 'OS';
+				}
+			} else {
+				$holdcode = $1 if $evvariant =~ /^New hold code:\s(\w+)\s/;
+			}
+			
+			if ($holdcode eq '') {
+				warn "holdcode is null -> $unit->{lotid},$lotid, $evtime,$evtype,$evvariant\n";
+				$holdcode = 'UK'
+				#last;
+			}					
+			$eunit->{duration} = $duration;
+			$eunit->{end_time} = $end_time;
+			$eunit->{start_time} = $evtime;
+			$eunit->{holdcode} = $holdcode;
+			$eunit->{lotid} = $lotid;
+			$end_time = $evtime;
+		}
+		push @{$unit->{HoldEvents}},$eunit;
+		$unit->{HoldDuration} += sprintf("%.2f",$eunit->{duration}/86400);
+	}
+}
+

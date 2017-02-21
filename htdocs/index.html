@@ -1,0 +1,522 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+
+<style type="text/css">
+.x-grid-record-yellow .x-grid-cell-inner{
+    background: yellow;
+}
+.x-grid-record-green .x-grid-cell-inner{
+    background: #00FF00;
+}
+.x-grid-record-red .x-grid-cell-inner{
+    background: red;
+}
+</style>
+    <title>Freescale OpenLot Result Webpage</title>
+    <link href="/ext-4.2.1.883/resources/css/ext-all-neptune.css" rel="stylesheet" type="text/css" />
+    <script src="/ext-4.2.1.883/ext-all-debug-w-comments.js" type="text/javascript"></script>
+	<link rel="stylesheet" type="text/css" href="/ext-4.2.1.883/src/ux/grid/css/GridFilters.css" />
+	<link rel="stylesheet" type="text/css" href="/ext-4.2.1.883/src/ux/grid/css/RangeMenu.css" />
+	
+    <!-- <script src="js/GridToExcel.js" type="text/javascript"></script> -->
+    <!-- <script src="ExtJs/ext-all.js" type="text/javascript"></script> -->
+<script type="text/javascript">
+    Ext.require(['*']);
+	Ext.require([ 'Ext.ux.grid.FiltersFeature']);
+	
+    Ext.onReady(function() {
+		Ext.QuickTips.init();
+		
+		Ext.define('DataModel', {
+			extend: 'Ext.data.Model',
+			fields: [
+				{name: 'platform', type: 'string'},
+				{name: 'mask', type: 'string'},
+				{name: 'device', type: 'string'},
+				{name: 'dpartname', type: 'string'},
+				{name: 'lotid', type: 'string'},
+				{name: 'priority', type: 'string'},
+				{name: 'TotalDuration', type: 'float'},
+				{name: 'HoldDuration', type: 'float'},
+				{name: 'RunningDuration', type: 'float'},
+				{name: 'lottype', type: 'string'},
+				{name: 'qty', type: 'int'},
+				{name: 'pdpw', type: 'int'},
+				{name: 'va', type: 'float'},
+				{name: '1va', type: 'float'},
+				{name: 'vxp', type: 'float'},
+				{name: 'storage_rack',  type: 'string'},
+				{name: 'stage',  type: 'string'},
+				{name: 'session',  type: 'string'},
+				{name: 'status',  type: 'string'},
+				{name: 'stateentrytime',  type: 'string'},
+				{name: 'holdcode',  type: 'string'},
+				{name: 'holdreason',  type: 'string'}
+			]
+		});
+
+		Ext.define('WaferCage', {
+			extend: 'Ext.data.Model',
+			fields: [
+				{name: 'platform', type: 'string'},
+				{name: 'device', type: 'string'},
+				{name: 'dpartname', type: 'string'},
+				{name: 'lotid', type: 'string'},
+				{name: 'priority', type: 'string'},
+				{name: 'lottype', type: 'string'},
+				{name: 'qty', type: 'int'},
+				{name: 'pdpw', type: 'int'},
+				{name: 'va', type: 'float'},
+				{name: '1va', type: 'float'},
+				{name: 'vxp', type: 'float'},
+				{name: 'stage',  type: 'string'},
+				{name: 'status',  type: 'string'}
+			]
+		});	
+
+		var DataStore = Ext.create('Ext.data.Store', {
+			storeId:'ResultsStore',
+			model:'DataModel',
+			sorters: [{
+				property:'TotalDuration',
+				direction: 'DESC'
+			},{
+				property:'platform',
+				direction: 'ASC'
+			}],
+			proxy: {
+				type:'ajax',
+//				url:'/cgi-bin/YieldMonitor/tmp_FeedBackByFilter.pl',
+				url:'/cgi-bin/OpenLot/getWipLot.pl',
+				reader:{
+					type:'json',
+					root:'results'
+				}
+			},
+			autoLoad:true
+		});
+
+		var wafer_cageStore = Ext.create('Ext.data.Store', {
+			storeId:'WaferCage',
+			model:'DataModel',
+			sorters: [{
+				property:'1va',
+				direction: 'DESC'
+			},{
+				property:'platform',
+				direction: 'ASC'
+			}],
+			proxy: {
+				type:'ajax',
+				url:'/cgi-bin/OpenLot/getWaferCage.pl',
+				reader:{
+					type:'json',
+					root:'results'
+				}
+			},
+			autoLoad:true
+		});	
+
+
+		var filtersCfg = {
+			ftype: 'filters',
+			autoReload: false, //don't reload automatically
+			local: true, //only filter locally
+			// filters may be configured through the plugin,
+			// or in the column definition within the headers configuration
+			filters: [{
+				type: 'list',
+				dataIndex: 'platform'
+			},{
+				type: 'string',
+				dataIndex: 'mask'
+			},{
+				type: 'numeric',
+				dataIndex: 'RunningDuration'
+			},{
+				type: 'numeric',
+				dataIndex: 'HoldDuration'
+			},{
+				type: 'numeric',
+				dataIndex: 'TotalDuration'
+			},{
+				type: 'numeric',
+				dataIndex: 'priority'
+			},{
+				type: 'numeric',
+				dataIndex: 'qty'
+			},{
+				type: 'numeric',
+				dataIndex: 'pdpw'
+			},{
+			        type: 'numeric',
+                                dataIndex: 'va'
+			},{
+                                type: 'numeric',
+                                dataIndex: '1va'
+			},{
+		                type: 'numeric',
+                                dataIndex: 'vxp'
+			},{
+				type: 'list',
+				dataIndex: 'status'
+			},{
+				type: 'string',
+				dataIndex: 'device'
+			},{
+				type: 'string',
+				dataIndex: 'lotid'
+			},{
+				type: 'list',
+				dataIndex: 'session'
+			},{
+				type: 'list',
+				dataIndex: 'holdtype'
+			},{
+				type: 'list',
+				dataIndex: 'lottype'
+			},{
+				type: 'list',
+				dataIndex: 'holdcode'
+			},{
+				type: 'list',
+				dataIndex: 'stage'
+			}]
+		};
+		
+		
+		var ResultsPanel = Ext.create('Ext.grid.Panel', {
+			autoScroll:true,
+			viewConfig:{
+				forceFit: true,
+				scrollOffset:0,
+				enableTextSelection:true  
+			},
+			requires: 'Ext.ux.grid.FiltersFeature',
+			features: [filtersCfg],
+			columns: [
+                                { text: 'Total CT', dataIndex: 'TotalDuration' ,sortable:true,width:110},
+				{ text: 'W+R', dataIndex: 'RunningDuration' ,sortable:true,width:70},
+				{ text: 'Platform',  dataIndex: 'platform',sortable:true,width:72 },
+				{ text: 'Mask',  dataIndex: 'mask',sortable:true,width:72 },
+				{ text: 'Device',  dataIndex: 'device',sortable:true,width:120 },
+				{ text: 'DiePartname',  dataIndex: 'dpartname',sortable:true,width:130 },
+				{ text: 'LotID', dataIndex: 'lotid' ,sortable:true,width:110},
+				{ text: 'Qty', dataIndex: 'qty',sortable:true,width:50 },
+				{ text: 'PDPW', dataIndex: 'pdpw',sortable:true,width:60 },
+				{ text: 'VA', dataIndex: 'va',sortable:true,width:100 },
+				{ text: '1/VA', dataIndex: '1va',sortable:true,width:60 },
+				{ text: 'VPQ', dataIndex: 'vxp',sortable:true,width:80 },
+				{ text: 'Priority', dataIndex: 'priority' ,sortable:true,width:40},
+				{ text: 'Lottype', dataIndex: 'lottype' ,sortable:true,width:60},
+				{ text: 'Shelf', dataIndex: 'storage_rack',sortable:true,width:75},
+				{ text: 'Stage', dataIndex: 'stage',sortable:true,width:100},
+				{ text: 'Session', dataIndex: 'session',sortable:true,width:70},
+				{ text: 'Status', dataIndex: 'status',sortable:true, width:70,renderer:renderBirthday},
+				{ text: 'HoldTime', dataIndex: 'stateentrytime',sortable:true, width:130},
+				{ text: 'HoldCode', dataIndex: 'holdcode',width:50},
+				{ text: 'HoldReason', dataIndex: 'holdreason',width:340 },
+				{ text: 'Hold', dataIndex: 'HoldDuration' ,sortable:true,width:110}
+			],
+			store:DataStore
+		});
+		var wafer_cageResultsPanel = Ext.create('Ext.grid.Panel', {
+			autoScroll:true,
+			viewConfig:{
+				forceFit: true,
+				scrollOffset:0,
+				enableTextSelection:true  
+			},
+			requires: 'Ext.ux.grid.FiltersFeature',
+			features: [filtersCfg],
+			columns: [
+				{ text: 'Platform',  dataIndex: 'platform',sortable:true,width:72 },
+				{ text: 'Device',  dataIndex: 'device',sortable:true,width:120 },
+				{ text: 'DiePartname',  dataIndex: 'dpartname',sortable:true,width:130 },
+				{ text: 'LotID', dataIndex: 'lotid' ,sortable:true,width:110},
+				{ text: 'Qty', dataIndex: 'qty',sortable:true,width:50 },
+				{ text: 'PDPW', dataIndex: 'pdpw',sortable:true,width:60 },
+				{ text: 'VA', dataIndex: 'va',sortable:true,width:100 },
+				{ text: '1/VA', dataIndex: '1va',sortable:true,width:60 },
+				{ text: 'VPQ', dataIndex: 'vxp',sortable:true,width:80 },
+				{ text: 'Priority', dataIndex: 'priority' ,sortable:true,width:40},
+				{ text: 'Lottype', dataIndex: 'lottype' ,sortable:true,width:60},
+				{ text: 'Stage', dataIndex: 'stage',sortable:true,width:100},
+				{ text: 'Status', dataIndex: 'status',sortable:true, width:70,renderer:renderBirthday}
+			],
+			store:wafer_cageStore
+		});	
+ 		var filterform =Ext.create('Ext.form.Panel', {
+					id:filterform,
+					title: 'Filter Form',
+					bodyPadding: 5,
+					width:300,
+					collapsible: true,  
+					collapsed: true,
+	//				split: true, 
+					// The form will submit an AJAX request to this URL when submitted
+					url: '/cgi-bin/OpenLot/getWipLot.pl',
+					region:'west',
+					defaultType: 'textfield',
+					items: [{
+						fieldLabel: 'Mask',
+						name: 'mask'
+					},{
+						fieldLabel: 'Device',
+						name: 'device'
+					},{
+						fieldLabel: 'Platform',
+						name: 'plat'
+					},{
+						fieldLabel: 'LotID',
+						name: 'lotid'
+					},{
+						fieldLabel: 'Stage',
+						name: 'stage'
+					},{
+						fieldLabel: 'Session',
+						name: 'session'
+					},{
+						fieldLabel: 'HoldCode',
+						name: 'holdcode'
+					},{
+						fieldLabel: 'Status',
+						name: 'status'
+					},{
+						fieldLabel: 'LotType',
+						name: 'lottype'
+					}],
+				buttonAlign : "center",
+				// Reset and Submit buttons
+					buttons: [{
+						text: 'Excel',
+						minWidth:50,
+						handler: function() {
+							var form = this.up('form').getForm();
+							var formvalues = form.getValues();
+							if (form.isValid()) {
+								form.submit({
+									params: {
+										toExcel:1
+									},
+									success: function(form, action) {
+										var filename = action.result.file;
+										//Ext.Msg.alert('AJAX Success', "Result:"+filename);
+										window.open("http://zch01app04v.ap.freescale.net/cgi-bin/OpenLot/download.pl?filename=" + filename);
+										//Ext.Msg.alert('AJAX Success2', "Result:"+filename);
+									},
+									failure: function(form, action) {
+										Ext.Msg.alert('Failed', "Load Data Error!<br>Please contact DataTeam JiangNan!");
+									}
+								});
+							}
+						
+						}
+					},{
+						minWidth:50,
+						text: 'Reset',
+						handler: function() {
+							this.up('form').getForm().reset();
+						}
+					}, {
+						text: 'Updata',
+						minWidth:50,
+                                                handler: function() {
+							winFielUpload.show();
+                                                }
+					},{
+						text: 'Submit',
+						minWidth:50,
+						formBind: true, //only enabled once the form is valid
+						disabled: true,
+						handler: function() {
+							var form = this.up('form').getForm();
+							if (form.isValid()) {
+								form.submit({
+									success: function(form, action) {
+										if (window.loader == 'wafercage') {
+										wafer_cageStore.loadData(action.result.results);
+										} else {
+										DataStore.loadData(action.result.results);
+										}
+									},
+									failure: function(form, action) {
+										Ext.Msg.alert('Failed', "Please contact DataTeam JiangNan!<br> Thank you for support!");
+									}
+								});
+							}
+						}
+					}]
+				});
+		var viewport = Ext.create('Ext.Viewport', {
+			id:'main',
+			layout: 'border',
+			items:[
+				{
+					xtype:'label',
+					region:'north',
+					height:50,
+					text:'Freescale Probe OpenLot Result Webpage',
+					style:'font-size:30px;color:white'
+				},
+				filterform,
+				Ext.create('Ext.tab.Panel', {
+					region: 'center', // a center region is ALWAYS required for border layout
+					deferredRender: false,
+					activeTab: 0,     // first tab initially active
+					items: [{
+							xtype:'panel',
+							title: 'Results',
+							layout:'fit', // fit can help generate crossrange scroll bar
+							listeners:{  
+                                       				activate:function(tab){  
+									window.loader='Wip';
+									filterform.getForm().url='/cgi-bin/OpenLot/getWipLot.pl';
+                                       				}  
+                                   			},  
+							items:[{
+								xtype:ResultsPanel
+							}]
+	  //                  autoScroll: true,
+						},{
+                    					title: 'Wafer_Cage',
+							layout:'fit',
+							xtype:'panel',
+                                                        listeners:{  
+                                                                activate:function(tab){  
+									window.loader='wafercage';
+									filterform.getForm().url='/cgi-bin/OpenLot/getWaferCage.pl';
+                                                                }  
+                                                        }, 
+							items:[{
+								xtype:wafer_cageResultsPanel
+							}]
+						}]
+					}),
+			]
+		});
+        var fpFileUpload = Ext.create('Ext.form.Panel',{
+
+                        id:'fpFileUpload',
+
+                        frame:true,
+
+                        fileUpload:true,
+			url:'/cgi-bin/OpenLot/updata_va.pl',
+
+                        items:[
+
+                            {
+                                xtype:'filefield',
+
+                                allowBlank:false,
+
+
+                                name:'fileName'
+                            }
+
+                        ],
+
+                        buttonAlign:'center',
+
+                        buttons:[
+
+                            {
+
+                                text:'update',
+				formBind: true, //only enabled once the form is valid
+                                handler:function(){
+
+                                    if(fpFileUpload.form.isValid()){
+
+                                        fpFileUpload.form.submit({
+						waitMsg:'updating...',
+                                            success: function(form, action) {
+						var msg=action.result.msg;
+                                                Ext.Msg.alert("MSG",msg);
+						 winFielUpload.hide();
+                                            },
+
+                                            failure: function(form, action) {
+
+                                                Ext.Msg.alert("MSG","updata fail");
+
+                                            }
+
+                                        });
+
+                                    }else{
+
+                                        Ext.Msg.alert("MSG","Pls select file");
+
+                                    }
+
+                                }
+
+                            },
+
+                            {
+
+                                text:'Cancel',
+
+                                handler:function(){
+
+                                    winFielUpload.hide();
+
+                                }
+
+                            }
+
+                        ]
+
+                    });
+                 var winFielUpload=new Ext.Window({
+
+                        id:'win',
+
+                        title:'updata',
+
+                        width:350,
+
+                        height:120,
+
+                        layout:'fit',
+
+                        autoDestory:true,
+
+                        modal:true,
+
+                        closeAction:'hide',
+
+                        items:[
+
+                            fpFileUpload
+
+                        ]
+
+                    });
+                    window.winFielUpload=winFielUpload;
+     
+    });
+	
+	
+	function renderBirthday(v, m, r) {
+    if (r.get('status') == 'Hold') {
+        //return '<SPAN style="COLOR: yellow">' + v + '</SPAN>';
+		m.tdCls = 'x-grid-record-red';
+	} else if (r.get('status') == 'Wait') {
+		m.tdCls = 'x-grid-record-yellow';
+    } else {
+        m.tdCls = 'x-grid-record-green';
+    }
+
+    return v;
+}
+	
+	
+    </script>
+	</head>
+<body>
+ 
+</body>
+</html>
